@@ -20,6 +20,17 @@ import pkg_resources
 import re
 import zipfile
 
+# Putting this a package's __init__.py causes it to set __path__ so that it is
+# possible to import modules and subpackages from other directories on sys.path.
+INITPY_CONTENTS = '''
+try:
+    import pkg_resources
+    pkg_resources.declare_namespace(__name__)
+except ImportError:
+    import pkgutil
+    __path__ = pkgutil.extend_path(__path__, __name__)
+'''
+
 
 class Wheel(object):
 
@@ -104,6 +115,35 @@ class Wheel(object):
   def expand(self, directory):
     with zipfile.ZipFile(self.path(), 'r') as whl:
       whl.extractall(directory)
+      names = set(whl.namelist())
+
+    # Workaround for https://github.com/bazelbuild/rules_python/issues/14
+    for initpy in self.get_init_paths(names):
+      with open(os.path.join(directory, initpy), 'w') as f:
+        f.write(INITPY_CONTENTS)
+
+  def get_init_paths(self, names):
+    # Overwrite __init__.py in these directories.
+    # (required as googleapis-common-protos has an empty __init__.py, which
+    # blocks google.api.core from google-cloud-core)
+    NAMESPACES = ["google/api"]
+
+    # Find package directories without __init__.py, or where the __init__.py
+    # must be overwritten to create a working namespace. This is based on
+    # Bazel's PythonUtils.getInitPyFiles().
+    init_paths = set()
+    for n in names:
+      if os.path.splitext(n)[1] not in ['.so', '.py', '.pyc']:
+        continue
+      while os.path.sep in n:
+        n = os.path.dirname(n)
+        initpy = os.path.join(n, '__init__.py')
+        initpyc = os.path.join(n, '__init__.pyc')
+        if (initpy in names or initpyc in names) and n not in NAMESPACES:
+          continue
+        init_paths.add(initpy)
+
+    return init_paths
 
   # _parse_metadata parses METADATA files according to https://www.python.org/dev/peps/pep-0314/
   def _parse_metadata(self, content):
