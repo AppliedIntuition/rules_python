@@ -17,17 +17,19 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--nodocker]" 1>&2
+  echo "Usage: $0 [--usedocker]" 1>&2
   exit 1
 }
 
 if [ "$#" -eq 0 ] ; then
-  docker build --no-cache -f tools/update_tools/Dockerfile --tag rules_python:update_tools .
-  docker run -v"$PWD":/opt/rules_python_source rules_python:update_tools
-elif [ "$#" -eq 1 -a "$1" == "--nodocker" ] ; then
-  bazel build //rules_python:piptool.par //rules_python:whltool.par
+  echo "Building from source"
+  bazel build //rules_python:piptool.par //rules_python:whltool.par 
   cp bazel-bin/rules_python/piptool.par tools/piptool.par
   cp bazel-bin/rules_python/whltool.par tools/whltool.par
+elif [ "$#" -eq 1 -a "$1" == "--usedocker" ] ; then
+  echo "Building from Docker image"
+  docker build --no-cache -f tools/update_tools/Dockerfile --tag rules_python:update_tools .
+  docker run -v"$PWD":/opt/rules_python_source rules_python:update_tools
 else
   usage
 fi
