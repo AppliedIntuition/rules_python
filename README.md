@@ -1,3 +1,7 @@
+# Applied Intuition's branch of Bazel Python Rules
+
+[Guide to making changes to Bazel Python Rules at Applied](https://docs.google.com/document/d/1kJjrNlefa25ZDWYhFB_9eOeN6hjIUo1UkB2k3cGJLn0/edit#)
+
 # Experimental Bazel Python Rules
 
 Status: This is **ALPHA** software.
