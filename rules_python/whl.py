@@ -13,6 +13,8 @@
 # limitations under the License.
 """The whl modules defines classes for interacting with Python packages."""
 
+_MODULE_PATH_OVERRIDES = ["tensorflow"]
+
 import argparse
 import json
 import os
@@ -112,35 +114,6 @@ class Wheel(object):
   def expand(self, directory):
     with zipfile.ZipFile(self.path(), 'r') as whl:
       whl.extractall(directory)
-      names = set(whl.namelist())
-
-    # Workaround for https://github.com/bazelbuild/rules_python/issues/14
-    for initpy in self.get_init_paths(names):
-      with open(os.path.join(directory, initpy), 'w') as f:
-        f.write(INITPY_CONTENTS)
-
-  def get_init_paths(self, names):
-    # Overwrite __init__.py in these directories.
-    # (required as googleapis-common-protos has an empty __init__.py, which
-    # blocks google.api.core from google-cloud-core)
-    NAMESPACES = ["ruamelj]
-
-    # Find package directories without __init__.py, or where the __init__.py
-    # must be overwritten to create a working namespace. This is based on
-    # Bazel's PythonUtils.getInitPyFiles().
-    init_paths = set()
-    for n in names:
-      if os.path.splitext(n)[1] not in ['.so', '.py', '.pyc']:
-        continue
-      while os.path.sep in n:
-        n = os.path.dirname(n)
-        initpy = os.path.join(n, '__init__.py')
-        initpyc = os.path.join(n, '__init__.pyc')
-        if (initpy in names or initpyc in names) and n not in NAMESPACES:
-          continue
-        init_paths.add(initpy)
-
-    return init_paths
 
   # _parse_metadata parses METADATA files according to https://www.python.org/dev/peps/pep-0314/
   def _parse_metadata(self, content):
@@ -148,7 +121,7 @@ class Wheel(object):
     name_pattern = re.compile('Name: (.*)')
     return { 'name': name_pattern.search(content).group(1) }
 
-  def _find_package_path(self, directory): 
+  def find_package_paths(self, directory): 
     """Finds the path to the package within the extracted .whl. 
 
     This is a patch to fix this issue: 
@@ -176,14 +149,15 @@ class Wheel(object):
     (added by anelise)
     """
     name = self.name()
+    paths=["."]
+    if name in _MODULE_PATH_OVERRIDES: 
+        # search the directory structure for the right folder
+        for dirname in _bfs_walk(directory): 
+            if os.path.exists(os.path.join(dirname, name)): 
+                paths = [dirname]
+                break
 
-    # search the directory structure for the right folder
-    for dirname in _bfs_walk(directory): 
-        if os.path.exists(os.path.join(dirname, name)): 
-            return dirname
-
-    # fall back to top-level
-    return "."
+    return paths
 
 parser = argparse.ArgumentParser(
     description='Unpack a WHL file as a py_library.')
@@ -207,7 +181,8 @@ def main():
   # Extract the files into the current directory
   whl.expand(args.directory)
 
-  import_path=whl._find_package_path(args.directory)
+  imports = whl.find_package_paths(args.directory)
+  imports_string = ", ".join(['"' + import_path + '"' for import_path in imports])
 
   with open(os.path.join(args.directory, 'BUILD'), 'w') as f:
     f.write("""
@@ -219,12 +194,12 @@ py_library(
     name = "pkg",
     srcs = glob(["**/*.py"]),
     data = glob(["**/*"], exclude=["**/*.py", "**/* *", "BUILD", "WORKSPACE"]),
-    imports = ["{import_path}"],
+    imports = [{imports_string}],
     deps = [{dependencies}],
 )
 {extras}""".format(
   requirements=args.requirements,
-  import_path=import_path,
+  imports_string=imports_string,
   dependencies=','.join([
     'requirement("%s")' % d
     for d in whl.dependencies()
